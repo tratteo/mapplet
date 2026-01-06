@@ -1,122 +1,34 @@
+import "package:drift/drift.dart";
 import "package:flutter/foundation.dart";
-import "package:isar/isar.dart";
-import "package:mapplet/src/common/extensions.dart";
+import "package:mapplet/src/database/database_schema.dart";
 import "package:mapplet/src/database/depot_stats.dart";
-import "package:mapplet/src/database/models/region_model.dart";
-import "package:mapplet/src/database/models/tile_model.dart";
 import "package:mapplet/src/depot/depot_config.dart";
-import "package:meta/meta.dart";
 import "package:queue/queue.dart";
 
-/// The depot database of **Mapplet**.
+/// The depot database of **Mapplet**, migrated to Drift.
 ///
-/// Create an **Isar** istance with [DepotConfiguration.id] as name and [DepotConfiguration.maxSizeMib] as max size.
-///
-/// Create also a temp instances for the batch writing.
+/// This facade wraps the [AppDatabase] and handles batch operations,
+/// region management, and statistical reporting.
 @internal
 class DepotDatabase {
-  DepotDatabase._(this.config);
+  DepotDatabase._(this.config, this.db);
 
-  late Isar db;
   final DepotConfiguration config;
+  late final AppDatabase db;
 
-  final List<Future<void>> _batchWriters = List.empty(growable: true);
-  late final Queue _writeQueue = Queue(parallel: config.parallelBatchWriters);
-  final List<int> _batchesIds = List<int>.empty(growable: true);
+  late final Queue _writeQueue = Queue(parallel: config.writeWorkers);
+  final List<String> _batchesUrls = List<String>.empty(growable: true);
 
-  static Future<bool> _commitRegionIsolate(List<Object> args) async {
-    var config = args[0] as DepotConfiguration;
-    var regionId = args[1] as String;
-    var ids = args[2] as List<int>;
-
-    var db = Isar.openSync(
-      [TileModelSchema, RegionModelSchema],
-      directory: config.directory,
-      name: config.id,
-      inspector: false,
-      maxSizeMiB: config.maxSizeMiB,
-    );
-
-    List<TileModel> tileList = List.empty(growable: true);
-    var storedRegion = db.regionModels.getSync(regionId.toIsarHash());
-    if (storedRegion != null) return true;
-
-    var res = db.tileModels.getAllSync(ids);
-    for (int i = 0; i < res.length; i++) {
-      var model = res[i];
-      if (model == null) continue;
-      tileList.add(
-        TileModel(
-          url: model.url,
-          bytes: model.bytes,
-          links: model.links + 1,
-        ),
-      );
-    }
-    var region = RegionModel(regionId: regionId)..tiles.addAll(tileList);
-    db.writeTxnSync(() {
-      db.tileModels.putAllSync(tileList);
-      db.regionModels.putSync(region);
-    });
-    await db.writeTxn(() async => await region.tiles.save());
-
-    return true;
-  }
-
-  static Future<bool> _deleteRegionIsolate(List<Object> args) async {
-    var config = args[0] as DepotConfiguration;
-    var regionId = args[1] as String;
-
-    var db = Isar.openSync(
-      [TileModelSchema, RegionModelSchema],
-      directory: config.directory,
-      name: config.id,
-      inspector: false,
-      maxSizeMiB: config.maxSizeMiB,
-    );
-    var res = db.regionModels.getSync(regionId.toIsarHash());
-
-    List<int> deleteList = List.empty(growable: true);
-    List<TileModel> pushList = List.empty(growable: true);
-    if (res == null) return false;
-    for (final tile in res.tiles) {
-      if (tile.links > 1) {
-        pushList.add(
-          TileModel(
-            url: tile.url,
-            bytes: tile.bytes,
-            links: tile.links - 1,
-          ),
-        );
-      } else {
-        deleteList.add(tile.id);
-      }
-    }
-    return db.writeTxnSync(() {
-      db.tileModels.deleteAllSync(deleteList);
-      db.tileModels.putAllSync(pushList);
-      return db.regionModels.deleteSync(regionId.toIsarHash());
-    });
-  }
-
-  /// Initialize **Isar**'s instance and temp instance with the given [DepotConfiguration]
-  ///
-  /// Returns the instance of the created class
+  /// Initialize the Drift database instance with the given [DepotConfiguration]
   static Future<DepotDatabase> open(DepotConfiguration config) async {
-    var data = DepotDatabase._(config);
-    data.db = await Isar.open(
-      [TileModelSchema, RegionModelSchema],
-      name: config.id,
-      directory: config.directory,
-      inspector: config.debugIsarConsole,
-      maxSizeMiB: config.maxSizeMiB,
-    );
+    // Note: AppDatabase handles its own connection opening based on the logic
+    final database = AppDatabase();
+    var data = DepotDatabase._(config, database);
 
     Future<void> cleanupUnlinked() async {
-      var unlinked = await data.db.tileModels.where().filter().linksEqualTo(0).findAll();
-      await data.db.writeTxn(
-        () async => await data.db.tileModels.deleteAll(unlinked.map((e) => e.id).toList()),
-      );
+      // In Drift/SQL, we delete tiles where links <= 0
+      final query = data.db.delete(data.db.tiles)..where((t) => t.links.isSmallerOrEqualValue(0));
+      await query.go();
     }
 
     if (config.cleanUnlinkedTilesOnInit) {
@@ -128,133 +40,180 @@ class DepotDatabase {
     return data;
   }
 
-  /// Close **Isar**'s instances
-  ///
-  /// If [deleteFromDisk] is `true`, delete all data
-  Future<bool> close({bool deleteFromDisk = false}) => db.close(deleteFromDisk: deleteFromDisk);
+  Future<void> clear() async {
+    await db.dropAllTables();
+  }
+
+  /// Close the database connection
+  Future<void> close() async {
+    await db.close();
+  }
 
   /// Add a single tile to the database
-  ///
-  /// Does not link any region to the current tile if it is new, but allows future fetch operations to detect that the tile is already present
-  Future<void> writeSingleTile(TileModel tile) async {
-    var stored = await db.tileModels.get(tile.id);
-    await db.writeTxn(
-      () => db.tileModels.put(
-        TileModel(
-          url: tile.url,
-          bytes: tile.bytes,
-          links: stored != null ? stored.links : 0,
-        ),
-      ),
-    );
+  Future<void> writeSingleTile(Tile tile) async {
+    await db.into(db.tiles).insertOnConflictUpdate(
+          TilesCompanion.insert(
+            url: tile.url,
+            bytes: tile.bytes,
+            links: Value(tile.links),
+            timestamp: Value(DateTime.now().toUtc().millisecondsSinceEpoch),
+          ),
+        );
   }
 
   /// Delete the given [regionId] from the db
   ///
-  /// Returns `true` if the region has been deleted, `false` otherwise
-  ///
-  /// Linked tiles will be deleted only if they have one [links], otherwise the link count is decremented
-  Future<bool> deleteRegion(String regionId) => compute(_deleteRegionIsolate, [config, regionId]);
+  /// Updates link counts for associated tiles and removes the region.
+  Future<bool> deleteRegion(String regionId) async {
+    try {
+      await db.transaction(() async {
+        // 1. Get all tiles associated with this region
+        final regionTilesQuery = db.select(db.regionTiles)..where((t) => t.regionId.equals(regionId));
+        final associations = await regionTilesQuery.get();
 
-  /// Clean the temporary internal files generated by call of [enqueueBatchWriteTx], preparing for future transactions
+        for (final assoc in associations) {
+          // 2. Decrement link count or delete if it's the last one
+          final tileQuery = db.select(db.tiles)..where((t) => t.url.equals(assoc.tileUrl));
+          final tile = await tileQuery.getSingleOrNull();
+
+          if (tile != null) {
+            if (tile.links > 1) {
+              await (db.update(db.tiles)..where((t) => t.url.equals(tile.url))).write(
+                TilesCompanion(links: Value(tile.links - 1)),
+              );
+            } else {
+              // Mark for deletion or delete immediately
+              await (db.delete(db.tiles)..where((t) => t.url.equals(tile.url))).go();
+            }
+          }
+        }
+
+        // 3. Delete the region-tile associations and the region itself
+        await (db.delete(db.regionTiles)..where((t) => t.regionId.equals(regionId))).go();
+        await (db.delete(db.regions)..where((t) => t.regionId.equals(regionId))).go();
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Clean the temporary tracked URLs for batch operations
   Future<void> cleanTemp({bool purgeUnlinkedTiles = true}) async {
-    _batchWriters.clear();
-    _batchesIds.clear();
+    _batchesUrls.clear();
     if (purgeUnlinkedTiles) {
-      var unlinked = await db.tileModels.where().filter().linksEqualTo(0).findAll();
-      await db.writeTxn(
-        () async => await db.tileModels.deleteAll(unlinked.map((e) => e.id).toList()),
-      );
+      final query = db.delete(db.tiles)..where((t) => t.links.isSmallerOrEqualValue(0));
+      await query.go();
     }
   }
 
-  /// Runs a [Future] function to write a batch of the transaction
-  Future<void> enqueueBatchWriteTx(List<TileModel> tileModels) async {
-    Future<void> batchWriteTx(List<TileModel> tileModels) async {
-      List<TileModel> list = List.empty(growable: true);
-      var res = await db.tileModels.getAll(tileModels.map((e) => e.id).toList());
-      for (int i = 0; i < tileModels.length; i++) {
-        var model = tileModels[i];
-        list.add(
-          TileModel(
-            url: model.url,
-            bytes: model.bytes,
-            links: res[i] != null ? res[i]!.links : 0,
-          ),
-        );
-        _batchesIds.add(model.id);
-      }
-      await db.writeTxn(() async => db.tileModels.putAll(list));
+  /// Runs a batch write transaction for tiles
+  Future<void> enqueueBatchWriteTx(List<Tile> tilesToSave) async {
+    Future<void> batchWriteTx() async {
+      await db.transaction(() async {
+        for (final tile in tilesToSave) {
+          // Check if tile exists to preserve/update link count
+          final existing = await (db.select(db.tiles)..where((t) => t.url.equals(tile.url))).getSingleOrNull();
+
+          await db.into(db.tiles).insertOnConflictUpdate(
+                TilesCompanion.insert(
+                  url: tile.url,
+                  bytes: tile.bytes,
+                  links: Value(existing?.links ?? 0),
+                  timestamp: Value(DateTime.now().toUtc().millisecondsSinceEpoch),
+                ),
+              );
+          _batchesUrls.add(tile.url);
+        }
+      });
     }
 
-    return _writeQueue.add(() => batchWriteTx(tileModels));
+    return _writeQueue.add(batchWriteTx);
   }
 
-  /// Commit all data passed with subsequent calls to [enqueueBatchWriteTx] in the db and attempt to complete the transaction
-  ///
-  /// First wait for all [enqueueBatchWriteTx] to be completed, then executes the commit transaction on a separate `Isolate`
+  /// Commit all tracked tiles to a specific region
   Future<bool> commitRegionTx(String regionId) async {
     await _writeQueue.onComplete;
-    //await Future.wait(_batchWriters);
-    _batchWriters.clear();
-    return await compute(_commitRegionIsolate, [config, regionId, _batchesIds]);
-  }
+    try {
+      await db.transaction(() async {
+        // 1. Ensure region exists
+        await db.into(db.regions).insertOnConflictUpdate(RegionsCompanion.insert(regionId: regionId));
 
-  /// Returns `Iterable<TileModel>` linked with the given [regionId] contained in the db
-  Future<Iterable<TileModel>> getRegionTiles(String regionId) async {
-    List<TileModel> list = List.empty(growable: true);
+        for (final url in _batchesUrls) {
+          // 2. Increment links for the tiles being committed
+          final tile = await (db.select(db.tiles)..where((t) => t.url.equals(url))).getSingleOrNull();
+          if (tile != null) {
+            await (db.update(db.tiles)..where((t) => t.url.equals(url))).write(
+              TilesCompanion(links: Value(tile.links + 1)),
+            );
 
-    var res = await db.regionModels.get(regionId.toIsarHash());
-    if (res == null) {
-      return list;
+            // 3. Create association
+            await db.into(db.regionTiles).insertOnConflictUpdate(
+                  RegionTilesCompanion.insert(regionId: regionId, tileUrl: url),
+                );
+          }
+        }
+      });
+      _batchesUrls.clear();
+      return true;
+    } catch (e) {
+      return false;
     }
-    list.addAll(res.tiles);
-    return list;
   }
 
-  /// Returns the `Iterable<TileModel>` contained in the db, that match the given [urls]
-  ///
-  /// Returns the `TileModel` if it is present, or `null` otherwise
-  Future<Iterable<TileModel?>> getTilesByUrl(Iterable<String> urls) => db.tileModels.getAll(urls.map((e) => e.toIsarHash()).toList());
+  /// Returns Tiles linked with the given [regionId]
+  Future<Iterable<Tile>> getRegionTiles(String regionId) async {
+    return await db.getTilesForRegion(regionId);
+  }
 
-  /// Returns the `Iterable<TileModel>` contained in the db, that match the given [url]
-  ///
-  /// Returns the `TileModel` if it is present, or `null` otherwise
-  Future<TileModel?> getSingleTileByUrl(String url) => db.tileModels.get(url.toIsarHash());
+  /// Returns the Tiles matching the given [urls]
+  Future<List<Tile?>> getTilesByUrl(Iterable<String> urls) async {
+    final query = db.select(db.tiles)..where((t) => t.url.isIn(urls));
+    final results = await query.get();
 
-  /// Returns all the [RegionModel] contained in the db
-  Future<Iterable<RegionModel>> getAllRegions() => db.regionModels.where().findAll();
+    // Maintain order and nulls as per original Isar getAll implementation
+    final resultMap = {for (final t in results) t.url: t};
+    return urls.map((url) => resultMap[url]).toList();
+  }
 
-  /// Returns `true` if the given [regionId] region is present in the db
+  /// Returns a single tile by URL
+  Future<Tile?> getSingleTileByUrl(String url) async {
+    return await (db.select(db.tiles)..where((t) => t.url.equals(url))).getSingleOrNull();
+  }
+
+  /// Returns all regions
+  Future<List<Region>> getAllRegions() => db.select(db.regions).get();
+
+  /// Checks if a region exists
   Future<bool> hasRegion(String regionId) async {
-    var res = await db.regionModels.get(regionId.toIsarHash());
-    if (res == null) return false;
-    return true;
+    final res = await (db.select(db.regions)..where((t) => t.regionId.equals(regionId))).getSingleOrNull();
+    return res != null;
   }
 
-  /// Returns `true` if the given [url] tile is present in the db
+  /// Checks if a tile exists
   Future<bool> hasTiles(String url) async {
-    var res = await db.tileModels.get(url.toIsarHash());
-    if (res == null) return false;
-    return true;
+    final res = await (db.select(db.tiles)..where((t) => t.url.equals(url))).getSingleOrNull();
+    return res != null;
   }
 
   /// Returns the [DepotStats] of the db
   Future<DepotStats> getStats() async {
-    var res = await Future.wait([
-      db.getSize(),
-      db.tileModels.getSize(),
-      db.regionModels.getSize(),
-      db.tileModels.count(),
-      db.regionModels.count(),
-    ]);
+    // Note: getSize() functionality varies in SQLite;
+    // we calculate counts and estimate sizes from bytes.
+    final allTiles = await db.select(db.tiles).get();
+    final regionCount = await db.regions.count().getSingle();
+
+    int totalBytes = 0;
+    for (final tile in allTiles) {
+      totalBytes += tile.bytes.length;
+    }
 
     return DepotStats(
-      byteSize: res[0],
-      tilesBytesSize: res[1],
-      regionsBytesSize: res[2],
-      tilesCount: res[3],
-      regionCount: res[4],
+      byteSize: totalBytes, // Simple estimation
+      tilesBytesSize: totalBytes,
+      regionsBytesSize: 0,
+      tilesCount: allTiles.length,
+      regionCount: regionCount,
     );
   }
 }

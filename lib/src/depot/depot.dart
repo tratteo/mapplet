@@ -2,10 +2,9 @@ import "dart:async";
 
 import "package:flutter_map/flutter_map.dart";
 import "package:mapplet/src/common/extensions.dart";
+import "package:mapplet/src/database/database_schema.dart";
 import "package:mapplet/src/database/depot_database.dart";
 import "package:mapplet/src/database/depot_stats.dart";
-import "package:mapplet/src/database/models/region_model.dart";
-import "package:mapplet/src/database/models/tile_model.dart";
 import "package:mapplet/src/depot/depot_config.dart";
 import "package:mapplet/src/depot/fetch_operation.dart";
 import "package:mapplet/src/providers/map_tile_provider.dart";
@@ -32,13 +31,13 @@ class Depot {
   DepotDatabase get db => _db;
 
   /// Close the instance and the database
-  ///
-  /// Delete also the database from disk with [deleteFromDisk]
-  Future<void> close({bool deleteFromDisk = false}) =>
-      _db.close(deleteFromDisk: deleteFromDisk);
+  Future<void> close() => _db.close();
+
+  /// Clear the whole database and drop all tables
+  Future<void> clear() => _db.clear();
 
   /// Get a tile by its url from the current [Depot], `null` if not found
-  Future<TileModel?> getTile(String url) => _db.getSingleTileByUrl(url);
+  Future<Tile?> getTile(String url) => _db.getSingleTileByUrl(url);
 
   /// Whether a certain region is stored
   Future<bool> hasRegion(String regionId) => _db.hasRegion(regionId);
@@ -47,7 +46,7 @@ class Depot {
   Future<DepotStats> getStats() => _db.getStats();
 
   /// Get all the regions stored in this instance
-  Future<Iterable<RegionModel>> getRegions() => _db.getAllRegions();
+  Future<Iterable<Region>> getRegions() => _db.getAllRegions();
 
   /// Store a map
   ///
@@ -62,9 +61,7 @@ class Depot {
     var provider = getTileProvider();
     return FetchOperation(
       regionId: regionId,
-      urls: bounds
-          .coords(config.minZoom.round(), config.maxZoom.round())
-          .map((e) => provider.getTileUrl(e, layer)),
+      urls: bounds.coords(config.minZoom.round(), config.maxZoom.round()).map((e) => provider.getTileUrl(e, layer)),
       config: config,
       db: _db,
     );

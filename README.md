@@ -1,7 +1,5 @@
 # The easiest way to store flutter maps for offline usage
 
-🧪 Although mantained and currently being worked on, the package is very young and under development
-
 ## Features
 
 **Mapplet** has been designed with simplicity in mind.
@@ -47,10 +45,6 @@ await Mapplet.initiate([
 ```
 
 Each configuration specified here will result in a single `Depot` being created under the hood.
-
-The structure of the configuration is the following:
-
-![config](https://codemeup.dev/api/tratteo/wildspace-dev@mapplet/render_lines?path=lib/src/depot/depot_config.dart&height=400&fragment=1-18&padding=24&border-radius=4&font-family=Inconsolata&theme=github-dark-default&bg=%23151b23&format=raw)
 
 ❗Version **^1.1.0**
 

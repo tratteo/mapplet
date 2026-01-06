@@ -7,10 +7,9 @@ import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:flutter_map/flutter_map.dart";
 import "package:mapplet/src/common/logger.dart";
-import "package:mapplet/src/database/models/tile_model.dart";
+import "package:mapplet/src/database/database_schema.dart";
 import "package:mapplet/src/depot/depot.dart";
 import "package:mapplet/src/providers/map_tile_provider.dart";
-import "package:meta/meta.dart";
 
 /// The tile image provider of **Mapplet**
 ///
@@ -56,7 +55,7 @@ class MappletTileImageProvider extends ImageProvider<MappletTileImageProvider> {
     Uint8List? bytes;
     final tileUrl = tileProvider.getTileUrl(coords, options);
     Codec codec;
-    TileModel? tile;
+    Tile? tile;
     try {
       tile = await depot.getTile(tileUrl);
       var evictPeriod = depot.config.tilesStoreEvictPeriod ?? const Duration(days: 7);
@@ -84,14 +83,16 @@ class MappletTileImageProvider extends ImageProvider<MappletTileImageProvider> {
           },
         );
         if (shouldUpdate) {
-          depot.db.writeSingleTile(TileModel.factory(tileUrl, bytes)).then((value) => log("evicted"));
+          depot.db
+              .writeSingleTile(Tile(url: tileUrl, bytes: bytes, links: 0, timestamp: DateTime.now().toUtc().millisecondsSinceEpoch))
+              .then((value) => packageLog("evicted"));
         }
         codec = await decode(await ImmutableBuffer.fromUint8List(bytes));
       } else {
         codec = await decode(await ImmutableBuffer.fromUint8List(Uint8List.fromList(tile.bytes)));
       }
     } catch (err) {
-      log(err.toString());
+      packageLog(err.toString());
       if (tile != null) {
         codec = await decode(await ImmutableBuffer.fromUint8List(Uint8List.fromList(tile.bytes)));
       } else {

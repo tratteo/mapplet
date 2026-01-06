@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.0.0
+
+>[!CAUTION]
+Breaking changes
+
+-   Changed datbase from [isar](https://pub.dev/packages/isar) to [drift](https://pub.dev/packages/drift)
+-   Updated to **flutter_map 8**
+
+>[!IMPORTANT]
+Mapplet v5 is the first version after the migration of the database backend and it might be subject to changes and new issues may arise.
+
 ## 4.0.3
 
 -   Dependencies bump

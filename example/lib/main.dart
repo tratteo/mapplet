@@ -9,6 +9,9 @@ Future<void> main() async {
       id: "default_depot",
       urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
       directory: (await getApplicationDocumentsDirectory()).path,
+      writeWorkers: 4,
+      fetchWorkers: 4,
+      adaptiveFetchWorkers: false,
       minZoom: 10,
       maxZoom: 16,
     ),
@@ -150,7 +153,7 @@ class _MyHomePageState extends State<MyHomePage> {
               onPressed: _committingSecond || _committingFirst
                   ? null
                   : () async {
-                      _fetchOp = _depot.depositRegion("region", LatLngBoundsExtensions.fromDelta(const LatLng(46, 12), 2.5));
+                      _fetchOp = _depot.depositRegion("region", LatLngBoundsExtensions.fromDelta(const LatLng(46, 12), 2));
                       _fetchOp!.onAbort.listen((_) {
                         debugPrint("operation aborted");
                         setState(() => _committingFirst = false);
@@ -223,7 +226,7 @@ class _MyHomePageState extends State<MyHomePage> {
               onPressed: _committingSecond || _committingFirst
                   ? null
                   : () async {
-                      _fetchOp = _depot.depositRegion("region_1", LatLngBoundsExtensions.fromDelta(const LatLng(46, 12), 5));
+                      _fetchOp = _depot.depositRegion("region_1", LatLngBoundsExtensions.fromDelta(const LatLng(46, 12), 4));
                       _fetchOp!.onAbort.listen((_) {
                         debugPrint("operation aborted");
                         setState(() => _committingSecond = false);
@@ -294,6 +297,17 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
               ..._buildSecondRegion(),
               const Divider(),
+              ElevatedButton.icon(
+                onPressed: _committingSecond || _committingFirst
+                    ? null
+                    : () async {
+                        await _depot.clear();
+                        var stats = await _depot.getStats();
+                        setState(() => _stats = stats);
+                      },
+                icon: const Icon(Icons.delete),
+                label: const Text("Delete all"),
+              ),
             ],
           ),
         ),
