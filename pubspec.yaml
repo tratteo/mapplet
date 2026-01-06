@@ -1,8 +1,8 @@
 name: mapplet
 description: Handle and use maps in flutter, even in offline enviroments with Mapplet, the easiest way to store flutter maps
-version: 4.0.3
-repository: https://github.com/wildspace-dev/mapplet
-issue_tracker: https://github.com/wildspace-dev/mapplet/issues
+version: 5.0.0
+repository: https://github.com/tratteo/mapplet
+issue_tracker: https://github.com/tratteo/mapplet/issues
 
 platforms:
     android:
@@ -12,19 +12,20 @@ platforms:
     windows:
 
 environment:
-    sdk: ">=2.19.4 <4.0.0"
+    sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
+    drift: ^2.30.0
+    drift_flutter: ^0.2.8
     flutter:
         sdk: flutter
     flutter_compass: ^0.8.1
-    flutter_map: ^6.2.1
-    geolocator: ^11.1.0
+    flutter_map: ^8.2.2
+    geolocator: ^14.0.2
     http: ^1.6.0
-    isar: 3.1.0+1
-    isar_flutter_libs: 3.1.0+1
     latlong2: ^0.9.1
     meta: ^1.17.0
+    path: ^1.9.1
     path_provider: ^2.1.5
     queue: ^3.4.0
     quiver: ^3.2.2
@@ -32,6 +33,6 @@ dependencies:
 dev_dependencies:
     flutter_test:
         sdk: flutter
-    flutter_lints: ^4.0.0
-    isar_generator: 3.1.0+1
+    flutter_lints: ^6.0.0
+    drift_dev: ^2.30.0
     build_runner: ^2.4.13

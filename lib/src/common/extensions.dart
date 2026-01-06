@@ -31,32 +31,29 @@ extension LatLngBoundsExtensions on LatLngBounds {
     num tileSize = 256,
     Crs? crs,
   }) {
-    crs ??= const Epsg3857();
-    Point<double> tileSizePoint = Point(tileSize.toDouble(), tileSize.toDouble());
+    final effectiveCrs = crs ?? const Epsg3857();
+    final List<TileCoordinates> coordinates = [];
 
-    int size = 0;
-    for (int zoom = 0; zoom < (maxZoom - (minZoom - 1)); zoom++) {
-      final zoomLevel = minZoom + zoom;
-      final nwPoint = crs.latLngToPoint(northWest, zoomLevel.toDouble()).unscaleBy(tileSizePoint).floor();
-      final sePoint = crs.latLngToPoint(southEast, zoomLevel.toDouble()).unscaleBy(tileSizePoint).ceil() - const Point(1, 1);
-      size += (sePoint.x - (nwPoint.x - 1)) * (sePoint.y - (nwPoint.y - 1));
-    }
+    for (int zoom = minZoom; zoom <= maxZoom; zoom++) {
+      // Get the bounds in pixel coordinates at this zoom level
 
-    List<TileCoordinates> coordinates = List.generate(size, (index) => const TileCoordinates(0, 0, 0), growable: false);
+      final scaleLvl = effectiveCrs.scale(zoom.toDouble());
+      final nw = effectiveCrs.latLngToXY(northWest, scaleLvl);
+      final nwX = (nw.$1 / tileSize).floor();
+      final nwY = (nw.$2 / tileSize).floor();
 
-    int index = 0;
-    for (int zoom = 0; zoom < (maxZoom - (minZoom - 1)); zoom++) {
-      final zoomLevel = minZoom + zoom;
-      final nwPoint = crs.latLngToPoint(northWest, zoomLevel.toDouble()).unscaleBy(tileSizePoint).floor();
-      final sePoint = crs.latLngToPoint(southEast, zoomLevel.toDouble()).unscaleBy(tileSizePoint).ceil() - const Point(1, 1);
-      final xSize = sePoint.x - (nwPoint.x - 1);
-      final ySize = sePoint.y - (nwPoint.y - 1);
-      for (int x = 0; x < xSize; x++) {
-        for (int y = 0; y < ySize; y++) {
-          coordinates[index++] = TileCoordinates(nwPoint.x + x, nwPoint.y + y, zoomLevel);
+      final se = effectiveCrs.latLngToXY(southEast, scaleLvl);
+      final seX = (se.$1 / tileSize).ceil() - 1;
+      final seY = (se.$2 / tileSize).ceil() - 1;
+
+      // Generate all tile coordinates within the bounds
+      for (int x = nwX; x <= seX; x++) {
+        for (int y = nwY; y <= seY; y++) {
+          coordinates.add(TileCoordinates(x, y, zoom));
         }
       }
     }
+
     return coordinates;
   }
 
@@ -64,19 +61,34 @@ extension LatLngBoundsExtensions on LatLngBounds {
   ///
   /// The result is a square region with half size equal to [deltaKm]
   static LatLngBounds fromDelta(LatLng center, double deltaKm) {
-    var nw = _getPointFromDelta(center, -deltaKm, deltaKm);
-    var ne = _getPointFromDelta(center, deltaKm, deltaKm);
-    var sw = _getPointFromDelta(center, -deltaKm, -deltaKm);
-    var se = _getPointFromDelta(center, deltaKm, -deltaKm);
-    return LatLngBounds.fromPoints([nw, ne, sw, se]);
-  }
+    // Earth's radius in kilometers
+    const double earthRadiusKm = 6371;
 
-  static LatLng _getPointFromDelta(LatLng point, double dx, double dy) {
-    const earthRadiusKm = 6378.137;
-    const toRad = 180 / pi;
-    var newX = point.latitude + ((dx / earthRadiusKm) * toRad);
-    var newY = point.longitude + (((dy / earthRadiusKm) * toRad) / cos(point.latitude * (1 / toRad)));
-    return LatLng(newX, newY);
+    // Convert delta to radians
+    final double deltaLat = (deltaKm / earthRadiusKm) * (180 / pi);
+
+    // Adjust delta longitude based on latitude (accounts for Earth's curvature)
+    final double deltaLng = (deltaKm / (earthRadiusKm * cos(center.latitude * pi / 180))) * (180 / pi);
+
+    // Calculate bounds
+    final double north = center.latitude + deltaLat;
+    final double south = center.latitude - deltaLat;
+    final double east = center.longitude + deltaLng;
+    final double west = center.longitude - deltaLng;
+
+    // Clamp latitude to valid range (-90, 90)
+    final double clampedNorth = north.clamp(-90.0, 90.0);
+    final double clampedSouth = south.clamp(-90.0, 90.0);
+
+    return LatLngBounds(
+      LatLng(clampedSouth, west),
+      LatLng(clampedNorth, east),
+    );
+    // var nw = _getPointFromDelta(center, -deltaKm, deltaKm);
+    // var ne = _getPointFromDelta(center, deltaKm, deltaKm);
+    // var sw = _getPointFromDelta(center, -deltaKm, -deltaKm);
+    // var se = _getPointFromDelta(center, deltaKm, -deltaKm);
+    // return LatLngBounds.fromPoints([nw, ne, sw, se]);
   }
 }
 

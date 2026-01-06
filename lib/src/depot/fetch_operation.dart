@@ -4,8 +4,8 @@ import "dart:math";
 import "package:http/http.dart" as http;
 import "package:mapplet/src/common/extensions.dart";
 import "package:mapplet/src/common/logger.dart";
+import "package:mapplet/src/database/database_schema.dart";
 import "package:mapplet/src/database/depot_database.dart";
-import "package:mapplet/src/database/models/tile_model.dart";
 import "package:mapplet/src/depot/depot_config.dart";
 import "package:meta/meta.dart";
 import "package:queue/queue.dart";
@@ -32,13 +32,13 @@ class TileFetchReport {
   final int sizeByte;
 }
 
-enum AbortReason { manual, fetchTimeout, fullStorage}
+enum AbortReason { manual, fetchTimeout, fullStorage }
 
 /// Handles the fetch operation of a region.
 ///
 /// Copies the [DepotConfiguration] of the corresponding [Depot].
 ///
-/// Fetches the tiles in parallel and writes on the database in batches. The size of the batches is defined by the [DepotConfiguration.fetchMaxHeapSizeMiB] and the level of parallelism by [DepotConfiguration.fetchMaxWorkers]
+/// Fetches the tiles in parallel and writes on the database in batches. The size of the batches is defined by the [DepotConfiguration.fetchMaxHeapSizeMiB] and the level of parallelism by [DepotConfiguration.fetchWorkers]
 class FetchOperation {
   FetchOperation({
     required DepotDatabase db,
@@ -75,22 +75,22 @@ class FetchOperation {
     required StreamController<TileFetchReport> fetchReport,
     double maxHeapSizeMib = 8,
   }) async {
-    var fetched = List<TileModel>.empty(growable: true);
+    var fetched = List<Tile>.empty(growable: true);
     var storedTiles = await _db.getTilesByUrl(urls);
     int retry = 0;
     int size = 0;
     for (int i = 0; i < storedTiles.length; i++) {
       var url = urls.elementAt(i);
-      TileModel? res = storedTiles.elementAt(i);
+      Tile? res = storedTiles.elementAt(i);
       while (res == null && retry < config.fetchTileAttempts) {
         try {
           final http.Response response = await client.get(Uri.parse(url)).timeout(config.fetchTileTimeout ?? const Duration(seconds: 5));
-          res = TileModel.factory(url, response.bodyBytes);
+          res = Tile(url: url, bytes: response.bodyBytes, links: 0, timestamp: DateTime.now().toUtc().millisecondsSinceEpoch);
         } catch (error) {
           if (error is TimeoutException) {
-            log("tile fetch timeout");
+            packageLog("tile fetch timeout");
           } else {
-            log("error on fetcher: $error");
+            packageLog("error on fetcher: $error");
           }
           res = null;
         }
@@ -120,7 +120,8 @@ class FetchOperation {
     _db.enqueueBatchWriteTx(fetched.toList());
   }
 
-  int _computeThreadCount(int tiles) => min([(1 / pow(tiles + 1, -0.375)).floor(), config.fetchMaxWorkers])!;
+  int _computeThreadCount(int tiles) =>
+      config.adaptiveFetchWorkers ? min([(1 / pow(tiles + 1, -0.375)).floor(), config.fetchWorkers])! : config.fetchWorkers;
 
   /// Abort the currently active operation, if any
   ///
@@ -133,7 +134,7 @@ class FetchOperation {
       _workersQueue?.cancel();
     } catch (_) {}
     await _db.cleanTemp(purgeUnlinkedTiles: purgeUnlinkedTiles);
-    log("fetch operation aborted");
+    packageLog("fetch operation aborted");
     _abortStreamController.sink.add(_abortReason ?? AbortReason.manual);
   }
 
@@ -145,7 +146,7 @@ class FetchOperation {
     var threadCount = _computeThreadCount(urls.length);
     var batchSize = urls.length ~/ threadCount;
     var threadMaxHeapSizeMib = config.fetchMaxHeapSizeMiB / threadCount;
-    log(
+    packageLog(
       "${urls.length} tiles, $threadCount workers with batches of $batchSize, max heap size ${config.fetchMaxHeapSizeMiB.toStringAsFixed(2)} MiB, ${threadMaxHeapSizeMib.toStringAsFixed(2)} MiB per worker",
     );
     _abortReason = null;
@@ -172,7 +173,7 @@ class FetchOperation {
       )
           .onError((error, stackTrace) {
         if (error is! QueueCancelledException) {
-          log("fetcher error $error, aborting operation");
+          packageLog("fetcher error $error, aborting operation");
           aborted = true;
           abort();
         }

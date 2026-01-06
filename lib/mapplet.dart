@@ -1,4 +1,4 @@
-library mapplet;
+library;
 
 import "dart:async";
 
@@ -8,8 +8,6 @@ import "package:mapplet/src/depot/depot_config.dart";
 export "package:mapplet/src/common/extensions.dart";
 
 export "package:mapplet/src/database/depot_stats.dart";
-export "package:mapplet/src/database/models/region_model.dart";
-export "package:mapplet/src/database/models/tile_model.dart";
 
 export "package:mapplet/src/depot/depot.dart";
 export "package:mapplet/src/depot/depot_config.dart";
@@ -36,8 +34,8 @@ class Mapplet {
     _depots.addAll(res);
   }
 
-  static Future<void> dispose({bool deleteFromDisk = false}) async {
-    var tasks = List.generate(_depots.length, (index) => _depots.elementAt(index).close(deleteFromDisk: deleteFromDisk));
+  static Future<void> dispose() async {
+    var tasks = List.generate(_depots.length, (index) => _depots.elementAt(index).close());
     await Future.wait(tasks);
   }
 

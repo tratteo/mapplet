@@ -5,14 +5,14 @@ class DepotConfiguration {
     required this.minZoom,
     required this.maxZoom,
     required this.directory,
-    this.parallelBatchWriters = 8,
+    this.writeWorkers = 2,
+    this.fetchWorkers = 8,
     this.fetchTileAttempts = 4,
-    this.fetchMaxHeapSizeMiB = 256,
-    this.fetchMaxWorkers = 24,
+    this.fetchMaxHeapSizeMiB = 128,
+    this.adaptiveFetchWorkers = true,
     this.maxSizeMiB = 2048,
     this.cleanUnlinkedTilesOnInit = true,
     this.awaitUnlinkedTileClenOnInit = true,
-    this.debugIsarConsole = false,
     this.tilesStoreEvictPeriod,
     this.fetchTileTimeout,
   });
@@ -29,8 +29,8 @@ class DepotConfiguration {
 
   /// Maximum number of concurrent writers on the database during the fetch operation
   ///
-  /// Writers write the fetched batches on the db while [fetchMaxWorkers] fetch the tiles form the web
-  final int parallelBatchWriters;
+  /// Writers write the fetched batches on the db while [fetchWorkers] fetch the tiles form the web
+  final int writeWorkers;
 
   /// After the following period has passed, update the tiles while fetching the tiles
   final Duration? tilesStoreEvictPeriod;
@@ -51,11 +51,6 @@ class DepotConfiguration {
   /// Template of the map endpoint
   final String urlTemplate;
 
-  /// If `true`, run **Isar** in debug mode with the possibility to access its webapp on the browser
-  ///
-  /// This defaults to `false` when building in [kReleaseMode]
-  final bool debugIsarConsole;
-
   /// Maximum size in MiB of the [Depot]
   final int maxSizeMiB;
 
@@ -73,10 +68,15 @@ class DepotConfiguration {
   /// Maximum number of attempts when trying to fetch a tile from the web
   final int fetchTileAttempts;
 
-  /// Maximum number of parallel workers to use when fetching a region
+  /// Number of parallel workers to use when fetching a region. If [adaptiveFetchWorkers] is true, this value is the maximum number of workers.
   ///
-  /// Workers are dedicated to fetching the tiles from the web, while [parallelBatchWriters] write the fetched batches on the db
-  final int fetchMaxWorkers;
+  /// Workers are dedicated to fetching the tiles from the web, while [writeWorkers] write the fetched batches on the db
+  final int fetchWorkers;
+
+  /// Whether to compute the number of fetch workers dynamically based on the number of tiles.
+  ///
+  /// If set to true, [fetchWorkers] identifies the maximum number of possible workers
+  final bool adaptiveFetchWorkers;
 
   /// Maximum size specified in MiB to occupy in the heap during the fetch operation
   ///

@@ -26,8 +26,8 @@ class DirectionPainter extends CustomPainter {
       radians(sweepAngle),
       true,
       Paint()
-        ..shader = RadialGradient(colors: List.generate(opList.length, (index) => color.withOpacity(color.opacity * opList[index])))
-            .createShader(rect),
+        ..shader =
+            RadialGradient(colors: List.generate(opList.length, (index) => color.withValues(alpha: color.a * opList[index]))).createShader(rect),
     );
   }
 
